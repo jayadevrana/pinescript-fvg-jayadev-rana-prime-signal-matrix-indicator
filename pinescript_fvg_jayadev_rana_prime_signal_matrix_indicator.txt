@@ -1,0 +1,386 @@
+//@version=6
+indicator("Jayadev Rana Prime Signal Matrix", shorttitle="JR Matrix", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=100)
+
+// Trend and higher-timeframe bias
+fastEmaLength = input.int(21, "Fast EMA length", minval=1, group="Trend Matrix", display=display.none)
+slowEmaLength = input.int(55, "Slow EMA length", minval=1, group="Trend Matrix", display=display.none)
+hullLength = input.int(34, "Hull trend length", minval=1, group="Trend Matrix", display=display.none)
+supertrendAtrLength = input.int(10, "Supertrend ATR length", minval=1, group="Trend Matrix", display=display.none)
+supertrendFactor = input.float(2.6, "Supertrend factor", minval=0.1, step=0.1, group="Trend Matrix", display=display.none)
+higherTimeframe = input.timeframe("D", "Higher-timeframe bias", group="Trend Matrix", tooltip="Uses the previous completed higher-timeframe candle to reduce repaint risk.", display=display.none)
+htfFastLength = input.int(21, "HTF fast EMA length", minval=1, group="Trend Matrix", display=display.none)
+htfSlowLength = input.int(55, "HTF slow EMA length", minval=1, group="Trend Matrix", display=display.none)
+
+// Market structure and liquidity
+pivotLeft = input.int(3, "Structure pivot left", minval=1, maxval=20, group="Market Structure", display=display.none)
+pivotRight = input.int(3, "Structure pivot right", minval=1, maxval=20, group="Market Structure", display=display.none)
+breakoutLength = input.int(20, "Breakout lookback", minval=2, group="Market Structure", display=display.none)
+showStructure = input.bool(true, "Show BOS/CHoCH lines", group="Market Structure", display=display.none)
+maxStructureDrawings = input.int(5, "Max structure drawings", minval=1, maxval=40, group="Market Structure", display=display.none)
+showFvgZones = input.bool(false, "Show imbalance zones", group="Market Structure", tooltip="Optional fair-value-gap style zones. Disabled by default to keep the chart clean.", display=display.none)
+zoneExtendBars = input.int(60, "Zone extension bars", minval=5, maxval=300, group="Market Structure", display=display.none)
+maxZones = input.int(6, "Max imbalance zones", minval=1, maxval=30, group="Market Structure", display=display.none)
+
+// Momentum, volume, and volatility
+rsiLength = input.int(14, "RSI length", minval=1, group="Momentum Matrix", display=display.none)
+rsiBullLevel = input.float(52.0, "RSI bullish level", minval=0.0, maxval=100.0, step=0.5, group="Momentum Matrix", display=display.none)
+rsiBearLevel = input.float(48.0, "RSI bearish level", minval=0.0, maxval=100.0, step=0.5, group="Momentum Matrix", display=display.none)
+macdFastLength = input.int(12, "MACD fast length", minval=1, group="Momentum Matrix", display=display.none)
+macdSlowLength = input.int(26, "MACD slow length", minval=1, group="Momentum Matrix", display=display.none)
+macdSignalLength = input.int(9, "MACD signal length", minval=1, group="Momentum Matrix", display=display.none)
+volumeLength = input.int(20, "Relative volume length", minval=1, group="Momentum Matrix", display=display.none)
+relativeVolumeThreshold = input.float(1.05, "Relative volume threshold", minval=0.1, step=0.05, group="Momentum Matrix", display=display.none)
+bbLength = input.int(20, "Volatility width length", minval=1, group="Momentum Matrix", display=display.none)
+bbMultiplier = input.float(2.0, "Volatility band multiplier", minval=0.1, step=0.1, group="Momentum Matrix", display=display.none)
+squeezeLookback = input.int(80, "Squeeze memory", minval=10, group="Momentum Matrix", display=display.none)
+
+// Signals and risk guides
+minimumScore = input.int(7, "Minimum signal score", minval=4, maxval=9, group="Signal Engine", tooltip="Signals require this many aligned matrix conditions out of 9.", display=display.none)
+cooldownBars = input.int(8, "Signal cooldown bars", minval=0, group="Signal Engine", display=display.none)
+atrLength = input.int(14, "ATR guide length", minval=1, group="Signal Engine", display=display.none)
+stopAtrMultiplier = input.float(1.35, "Stop ATR multiplier", minval=0.1, step=0.05, group="Signal Engine", display=display.none)
+targetOneR = input.float(1.0, "Target 1R", minval=0.1, step=0.1, group="Signal Engine", display=display.none)
+targetTwoR = input.float(2.0, "Target 2R", minval=0.1, step=0.1, group="Signal Engine", display=display.none)
+signalDrawingBars = input.int(36, "Signal drawing length", minval=5, maxval=250, group="Signal Engine", display=display.none)
+maxSignalDrawings = input.int(1, "Recent signal drawing sets", minval=1, maxval=20, group="Signal Engine", display=display.none)
+
+// Visual controls
+showTrendCloud = input.bool(true, "Show trend cloud", group="Visual Style", display=display.none)
+showHullTrend = input.bool(true, "Show Hull trend line", group="Visual Style", display=display.none)
+showSupertrend = input.bool(false, "Show Supertrend filter", group="Visual Style", display=display.none)
+showSignalLabels = input.bool(true, "Show scored buy/sell labels", group="Visual Style", display=display.none)
+showSignalLevels = input.bool(true, "Draw entry/stop/targets", group="Visual Style", display=display.none)
+showCandleTint = input.bool(false, "Tint candles by matrix bias", group="Visual Style", display=display.none)
+buyColor = input.color(color.rgb(0, 210, 140), "Buy color", group="Visual Style", display=display.none)
+sellColor = input.color(color.rgb(255, 76, 96), "Sell color", group="Visual Style", display=display.none)
+neutralColor = input.color(color.rgb(120, 140, 170), "Neutral color", group="Visual Style", display=display.none)
+
+// Dashboard and creator box
+showDashboard = input.bool(true, "Show Jayadev Rana signal dashboard", group="Dashboard", display=display.none)
+dashboardSize = input.string("Large", "Dashboard size", options=["Small", "Normal", "Large", "Huge"], group="Dashboard", display=display.none)
+dashboardPosition = input.string("Top Right", "Dashboard position", options=["Top Right", "Middle Right", "Bottom Right", "Top Left"], group="Dashboard", display=display.none)
+
+fastEma = ta.ema(close, fastEmaLength)
+slowEma = ta.ema(close, slowEmaLength)
+hullTrend = ta.hma(close, hullLength)
+[supertrendLine, _] = ta.supertrend(supertrendFactor, supertrendAtrLength)
+atrValue = ta.atr(atrLength)
+
+htfClose = request.security(syminfo.tickerid, higherTimeframe, close[1], barmerge.gaps_off, barmerge.lookahead_off)
+htfFastEma = request.security(syminfo.tickerid, higherTimeframe, ta.ema(close, htfFastLength)[1], barmerge.gaps_off, barmerge.lookahead_off)
+htfSlowEma = request.security(syminfo.tickerid, higherTimeframe, ta.ema(close, htfSlowLength)[1], barmerge.gaps_off, barmerge.lookahead_off)
+
+rsiValue = ta.rsi(close, rsiLength)
+[macdLine, macdSignal, macdHist] = ta.macd(close, macdFastLength, macdSlowLength, macdSignalLength)
+volumeAverage = ta.sma(volume, volumeLength)
+hasVolume = not na(volume) and not na(volumeAverage) and volumeAverage > 0
+relativeVolume = hasVolume ? volume / volumeAverage : na
+
+bbBasis = ta.sma(close, bbLength)
+bbDeviation = ta.stdev(close, bbLength) * bbMultiplier
+bbUpper = bbBasis + bbDeviation
+bbLower = bbBasis - bbDeviation
+bbWidth = bbBasis != 0 ? (bbUpper - bbLower) / math.abs(bbBasis) * 100.0 : na
+lowestWidth = ta.lowest(bbWidth, squeezeLookback)
+bbWidthAverage = ta.sma(bbWidth, bbLength)
+squeezeActive = not na(bbWidth) and not na(lowestWidth) and bbWidth <= lowestWidth * 1.25
+volatilityExpanding = not na(bbWidth) and bbWidth > bbWidth[1] and bbWidth > bbWidthAverage
+squeezeReleaseBull = squeezeActive[1] and volatilityExpanding and close > bbBasis
+squeezeReleaseBear = squeezeActive[1] and volatilityExpanding and close < bbBasis
+
+highestBreak = ta.highest(high, breakoutLength)[1]
+lowestBreak = ta.lowest(low, breakoutLength)[1]
+breakoutBull = not na(highestBreak) and close > highestBreak
+breakoutBear = not na(lowestBreak) and close < lowestBreak
+
+pivotHighValue = ta.pivothigh(high, pivotLeft, pivotRight)
+pivotLowValue = ta.pivotlow(low, pivotLeft, pivotRight)
+var float lastSwingHigh = na
+var float lastSwingLow = na
+var int lastSwingHighBar = na
+var int lastSwingLowBar = na
+var int structureBias = 0
+
+if not na(pivotHighValue)
+    lastSwingHigh := pivotHighValue
+    lastSwingHighBar := bar_index - pivotRight
+
+if not na(pivotLowValue)
+    lastSwingLow := pivotLowValue
+    lastSwingLowBar := bar_index - pivotRight
+
+bullStructureBreak = barstate.isconfirmed and not na(lastSwingHigh) and close > lastSwingHigh and close[1] <= lastSwingHigh
+bearStructureBreak = barstate.isconfirmed and not na(lastSwingLow) and close < lastSwingLow and close[1] >= lastSwingLow
+bullChoch = bullStructureBreak and structureBias < 0
+bearChoch = bearStructureBreak and structureBias > 0
+sellSideSweep = barstate.isconfirmed and not na(lastSwingLow) and low < lastSwingLow and close > lastSwingLow
+buySideSweep = barstate.isconfirmed and not na(lastSwingHigh) and high > lastSwingHigh and close < lastSwingHigh
+
+if bullStructureBreak
+    structureBias := 1
+
+if bearStructureBreak
+    structureBias := -1
+
+rangeValue = math.max(high - low, syminfo.mintick)
+bodyStrength = math.abs(close - open) / rangeValue
+impulseBull = close > open and bodyStrength > 0.45 and close > high[1]
+impulseBear = close < open and bodyStrength > 0.45 and close < low[1]
+
+htfBull = htfClose > htfFastEma and htfFastEma > htfSlowEma
+htfBear = htfClose < htfFastEma and htfFastEma < htfSlowEma
+localTrendBull = fastEma > slowEma and close > fastEma and hullTrend > hullTrend[1]
+localTrendBear = fastEma < slowEma and close < fastEma and hullTrend < hullTrend[1]
+superBull = close > supertrendLine
+superBear = close < supertrendLine
+structureBull = structureBias > 0 or bullStructureBreak or sellSideSweep
+structureBear = structureBias < 0 or bearStructureBreak or buySideSweep
+momentumBull = rsiValue > rsiBullLevel and rsiValue > rsiValue[1]
+momentumBear = rsiValue < rsiBearLevel and rsiValue < rsiValue[1]
+macdBull = macdLine > macdSignal and macdHist > macdHist[1]
+macdBear = macdLine < macdSignal and macdHist < macdHist[1]
+volumeBull = not hasVolume or relativeVolume >= relativeVolumeThreshold
+volumeBear = volumeBull
+volatilityBull = breakoutBull or squeezeReleaseBull or (close > bbBasis and volatilityExpanding)
+volatilityBear = breakoutBear or squeezeReleaseBear or (close < bbBasis and volatilityExpanding)
+priceActionBull = impulseBull or close > high[1]
+priceActionBear = impulseBear or close < low[1]
+
+bullScore = (htfBull ? 1 : 0) + (localTrendBull ? 1 : 0) + (superBull ? 1 : 0) + (structureBull ? 1 : 0) + (momentumBull ? 1 : 0) + (macdBull ? 1 : 0) + (volumeBull ? 1 : 0) + (volatilityBull ? 1 : 0) + (priceActionBull ? 1 : 0)
+bearScore = (htfBear ? 1 : 0) + (localTrendBear ? 1 : 0) + (superBear ? 1 : 0) + (structureBear ? 1 : 0) + (momentumBear ? 1 : 0) + (macdBear ? 1 : 0) + (volumeBear ? 1 : 0) + (volatilityBear ? 1 : 0) + (priceActionBear ? 1 : 0)
+
+crossFastBull = ta.crossover(close, fastEma)
+crossFastBear = ta.crossunder(close, fastEma)
+trendShiftBull = ta.crossover(fastEma, slowEma)
+trendShiftBear = ta.crossunder(fastEma, slowEma)
+bullTrigger = bullStructureBreak or sellSideSweep or crossFastBull or trendShiftBull or breakoutBull or squeezeReleaseBull
+bearTrigger = bearStructureBreak or buySideSweep or crossFastBear or trendShiftBear or breakoutBear or squeezeReleaseBear
+
+var int lastBullSignalBar = na
+var int lastBearSignalBar = na
+cooldownReadyBull = na(lastBullSignalBar) or bar_index - lastBullSignalBar > cooldownBars
+cooldownReadyBear = na(lastBearSignalBar) or bar_index - lastBearSignalBar > cooldownBars
+
+bullSignal = barstate.isconfirmed and cooldownReadyBull and bullScore >= minimumScore and bullScore > bearScore and bullTrigger
+bearSignal = barstate.isconfirmed and cooldownReadyBear and bearScore >= minimumScore and bearScore > bullScore and bearTrigger
+
+if bullSignal
+    lastBullSignalBar := bar_index
+
+if bearSignal
+    lastBearSignalBar := bar_index
+
+matrixBias = bullScore > bearScore ? 1 : bearScore > bullScore ? -1 : 0
+matrixColor = matrixBias > 0 ? buyColor : matrixBias < 0 ? sellColor : neutralColor
+
+fastPlot = plot(showTrendCloud ? fastEma : na, "Fast EMA", color=color.new(buyColor, 0), linewidth=1)
+slowPlot = plot(showTrendCloud ? slowEma : na, "Slow EMA", color=color.new(color.orange, 0), linewidth=1)
+fill(fastPlot, slowPlot, color=showTrendCloud ? color.new(matrixColor, 88) : na, title="Matrix trend cloud")
+plot(showHullTrend ? hullTrend : na, "Hull trend", color=color.new(matrixColor, 0), linewidth=2)
+plot(showSupertrend ? supertrendLine : na, "Supertrend filter", color=color.new(matrixColor, 10), linewidth=1)
+barcolor(showCandleTint ? color.new(matrixColor, 20) : na)
+
+var array<line> structureLines = array.new<line>()
+var array<label> structureLabels = array.new<label>()
+var array<box> zoneBoxes = array.new<box>()
+var array<line> signalLines = array.new<line>()
+var array<label> signalLabels = array.new<label>()
+
+f_trim_structure() =>
+    while array.size(structureLines) > maxStructureDrawings
+        line.delete(array.shift(structureLines))
+    while array.size(structureLabels) > maxStructureDrawings
+        label.delete(array.shift(structureLabels))
+
+f_trim_zones() =>
+    while array.size(zoneBoxes) > maxZones
+        box.delete(array.shift(zoneBoxes))
+
+f_trim_signals() =>
+    int maxLines = maxSignalDrawings * 4
+    int maxLabels = maxSignalDrawings * 5
+    while array.size(signalLines) > maxLines
+        line.delete(array.shift(signalLines))
+    while array.size(signalLabels) > maxLabels
+        label.delete(array.shift(signalLabels))
+
+f_add_structure_line(int startBar, float price, bool isBull, bool isChoch) =>
+    if showStructure and not na(startBar)
+        color lineColor = isBull ? buyColor : sellColor
+        string tag = isChoch ? (isBull ? "CHoCH LONG" : "CHoCH SHORT") : (isBull ? "BOS LONG" : "BOS SHORT")
+        line newLine = line.new(startBar, price, bar_index, price, color=color.new(lineColor, 10), width=1, style=line.style_dashed)
+        label newLabel = label.new(bar_index, price, tag, style=isBull ? label.style_label_down : label.style_label_up, color=color.new(lineColor, 0), textcolor=color.white, size=size.tiny)
+        array.push(structureLines, newLine)
+        array.push(structureLabels, newLabel)
+        f_trim_structure()
+
+f_add_zone(bool isBull) =>
+    if showFvgZones
+        color zoneColor = isBull ? buyColor : sellColor
+        float top = isBull ? low : low[2]
+        float bottom = isBull ? high[2] : high
+        box newBox = box.new(bar_index - 2, top, bar_index + zoneExtendBars, bottom, bgcolor=color.new(zoneColor, 88), border_color=color.new(zoneColor, 45))
+        array.push(zoneBoxes, newBox)
+        f_trim_zones()
+
+f_stop_price(bool isBull) =>
+    float atrStop = isBull ? close - atrValue * stopAtrMultiplier : close + atrValue * stopAtrMultiplier
+    float swingStop = isBull and not na(lastSwingLow) and lastSwingLow < close ? lastSwingLow : not isBull and not na(lastSwingHigh) and lastSwingHigh > close ? lastSwingHigh : atrStop
+    isBull ? math.max(swingStop, atrStop) : math.min(swingStop, atrStop)
+
+f_add_signal_line(float price, color lineColor, string textValue) =>
+    int endBar = bar_index + signalDrawingBars
+    line newLine = line.new(bar_index, price, endBar, price, color=color.new(lineColor, 10), width=1, style=line.style_solid)
+    label newLabel = label.new(endBar, price, textValue, style=label.style_label_left, color=color.new(lineColor, 5), textcolor=color.white, size=size.tiny)
+    array.push(signalLines, newLine)
+    array.push(signalLabels, newLabel)
+
+f_draw_signal(bool isBull, int scoreValue) =>
+    color lineColor = isBull ? buyColor : sellColor
+    float entry = close
+    float stop = f_stop_price(isBull)
+    float risk = math.max(math.abs(entry - stop), syminfo.mintick)
+    float targetOne = isBull ? entry + risk * targetOneR : entry - risk * targetOneR
+    float targetTwo = isBull ? entry + risk * targetTwoR : entry - risk * targetTwoR
+    if showSignalLabels
+        string textValue = isBull ? "BUY\n" + str.tostring(scoreValue) + "/9" : "SELL\n" + str.tostring(scoreValue) + "/9"
+        label signalLabel = label.new(bar_index, isBull ? low : high, textValue, style=isBull ? label.style_label_up : label.style_label_down, color=color.new(lineColor, 0), textcolor=color.white, size=size.small)
+        array.push(signalLabels, signalLabel)
+    if showSignalLevels
+        f_add_signal_line(entry, lineColor, isBull ? "Buy entry" : "Sell entry")
+        f_add_signal_line(stop, color.gray, "Stop guide")
+        f_add_signal_line(targetOne, lineColor, "Target 1R")
+        f_add_signal_line(targetTwo, lineColor, "Target 2R")
+    f_trim_signals()
+
+if bullStructureBreak
+    f_add_structure_line(lastSwingHighBar, lastSwingHigh, true, bullChoch)
+
+if bearStructureBreak
+    f_add_structure_line(lastSwingLowBar, lastSwingLow, false, bearChoch)
+
+bullFvg = low > high[2] and close > open
+bearFvg = high < low[2] and close < open
+
+if bullFvg
+    f_add_zone(true)
+
+if bearFvg
+    f_add_zone(false)
+
+if bullSignal
+    f_draw_signal(true, bullScore)
+
+if bearSignal
+    f_draw_signal(false, bearScore)
+
+var int activeDirection = 0
+var float activeEntry = na
+var float activeStop = na
+var float activeTarget = na
+var int totalSetups = 0
+var int completedSetups = 0
+var int winningSetups = 0
+var string lastSignalText = "Waiting"
+
+newSignal = bullSignal or bearSignal
+
+if newSignal
+    bool isBullSignal = bullSignal
+    float entry = close
+    float stop = f_stop_price(isBullSignal)
+    float risk = math.max(math.abs(entry - stop), syminfo.mintick)
+    activeDirection := isBullSignal ? 1 : -1
+    activeEntry := entry
+    activeStop := stop
+    activeTarget := isBullSignal ? entry + risk * targetOneR : entry - risk * targetOneR
+    totalSetups += 1
+    lastSignalText := (isBullSignal ? "BUY " : "SELL ") + str.tostring(isBullSignal ? bullScore : bearScore) + "/9 @ " + str.tostring(entry, format.mintick)
+
+targetHit = activeDirection == 1 ? high >= activeTarget : activeDirection == -1 ? low <= activeTarget : false
+stopHit = activeDirection == 1 ? low <= activeStop : activeDirection == -1 ? high >= activeStop : false
+
+if activeDirection != 0 and not newSignal
+    if stopHit
+        completedSetups += 1
+        activeDirection := 0
+    else if targetHit
+        completedSetups += 1
+        winningSetups += 1
+        activeDirection := 0
+
+dashboardTextSize = switch dashboardSize
+    "Small" => size.small
+    "Normal" => size.normal
+    "Huge" => size.huge
+    "Large" => size.large
+    => size.large
+
+dashboardPlacement = switch dashboardPosition
+    "Top Left" => position.top_left
+    "Middle Right" => position.middle_right
+    "Bottom Right" => position.bottom_right
+    "Top Right" => position.top_right
+    => position.top_right
+
+var table dashboard = table.new(dashboardPlacement, 2, 16, border_width=2, border_color=color.rgb(0, 210, 140))
+
+f_table_cell(int column, int row, string textValue, color bgColor, color textColor) =>
+    table.cell(dashboard, column, row, textValue, bgcolor=bgColor, text_color=textColor, text_size=dashboardTextSize)
+
+if showDashboard and barstate.islast
+    color headerBg = color.rgb(0, 110, 90)
+    color labelBg = color.rgb(16, 24, 36)
+    color valueBg = color.rgb(22, 32, 48)
+    color longBg = color.rgb(0, 88, 70)
+    color shortBg = color.rgb(100, 24, 36)
+    color warnBg = color.rgb(255, 150, 0)
+    string biasText = matrixBias > 0 ? "LONG bias" : matrixBias < 0 ? "SHORT bias" : "Neutral"
+    string scoreText = str.tostring(bullScore) + "L / " + str.tostring(bearScore) + "S"
+    string htfText = htfBull ? "Bullish " + higherTimeframe : htfBear ? "Bearish " + higherTimeframe : "Mixed " + higherTimeframe
+    string structureText = structureBias > 0 ? "Bullish structure" : structureBias < 0 ? "Bearish structure" : "Building structure"
+    string momentumText = momentumBull and macdBull ? "Strong bull" : momentumBear and macdBear ? "Strong bear" : "Mixed"
+    string volumeText = hasVolume ? str.tostring(relativeVolume, "#.##") + "x rel vol" : "Volume neutral"
+    string volatilityText = squeezeActive ? "Squeeze" : volatilityExpanding ? "Expansion" : "Normal"
+    string activeText = activeDirection == 1 ? "Long active" : activeDirection == -1 ? "Short active" : "No active guide"
+    string trackerText = completedSetups > 0 ? str.tostring(math.round(winningSetups * 100.0 / completedSetups)) + "% " + str.tostring(winningSetups) + "/" + str.tostring(completedSetups) : "Learning"
+    f_table_cell(0, 0, "🚀 JR Prime Matrix", headerBg, color.white)
+    f_table_cell(1, 0, "Jayadev Rana", headerBg, color.white)
+    f_table_cell(0, 1, "Bias", labelBg, color.white)
+    f_table_cell(1, 1, biasText, matrixBias > 0 ? longBg : matrixBias < 0 ? shortBg : valueBg, color.white)
+    f_table_cell(0, 2, "Score", labelBg, color.white)
+    f_table_cell(1, 2, scoreText, valueBg, color.white)
+    f_table_cell(0, 3, "HTF", labelBg, color.white)
+    f_table_cell(1, 3, htfText, valueBg, color.white)
+    f_table_cell(0, 4, "Structure", labelBg, color.white)
+    f_table_cell(1, 4, structureText, valueBg, color.white)
+    f_table_cell(0, 5, "Momentum", labelBg, color.white)
+    f_table_cell(1, 5, momentumText, valueBg, color.white)
+    f_table_cell(0, 6, "Volume", labelBg, color.white)
+    f_table_cell(1, 6, volumeText, valueBg, color.white)
+    f_table_cell(0, 7, "Volatility", labelBg, color.white)
+    f_table_cell(1, 7, volatilityText, valueBg, color.white)
+    f_table_cell(0, 8, "Active", labelBg, color.white)
+    f_table_cell(1, 8, activeText, valueBg, color.white)
+    f_table_cell(0, 9, "Tracker", labelBg, color.white)
+    f_table_cell(1, 9, trackerText, valueBg, color.white)
+    f_table_cell(0, 10, "Last setup", labelBg, color.white)
+    f_table_cell(1, 10, lastSignalText, valueBg, color.white)
+    f_table_cell(0, 11, "📲 WhatsApp", color.rgb(12, 18, 28), color.rgb(0, 255, 180))
+    f_table_cell(1, 11, "+91 77352 68199", color.rgb(12, 18, 28), color.rgb(0, 255, 180))
+    f_table_cell(0, 12, "👉 CTA", warnBg, color.black)
+    f_table_cell(1, 12, "Get strategy coded", warnBg, color.black)
+    f_table_cell(0, 13, "✅ Pine Script", valueBg, color.white)
+    f_table_cell(1, 13, "TV Automation", valueBg, color.white)
+    f_table_cell(0, 14, "✅ MT5 EA", valueBg, color.white)
+    f_table_cell(1, 14, "Broker API", valueBg, color.white)
+    f_table_cell(0, 15, "🌐 jayadevrana.in", color.rgb(80, 20, 30), color.white)
+    f_table_cell(1, 15, "Audit + Repair", color.rgb(80, 20, 30), color.white)
+
+if not showDashboard and barstate.islast
+    table.clear(dashboard, 0, 0, 1, 15)
+
+alertcondition(bullSignal, "Prime buy signal confirmed", "JR Prime Matrix: buy signal confirmed on {{ticker}} at {{close}}.")
+alertcondition(bearSignal, "Prime sell signal confirmed", "JR Prime Matrix: sell signal confirmed on {{ticker}} at {{close}}.")
+alertcondition(bullStructureBreak, "Bullish BOS/CHoCH", "JR Prime Matrix: bullish structure break on {{ticker}}.")
+alertcondition(bearStructureBreak, "Bearish BOS/CHoCH", "JR Prime Matrix: bearish structure break on {{ticker}}.")
